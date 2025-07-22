@@ -7,7 +7,7 @@ data:
   llmdbench_workload.yaml: |
     # LMBenchmark Workload Configuration for LLM-D Benchmark
     # must match model_endpoint/v1/models
-    model_name: "meta-llama/Llama-3.2-3B-Instruct"
+    model_name: "Qwen/Qwen3-0.6B"
     scenarios: "long-input"
     qps_values: "0.1 0.25 0.5"
     image: "lmcache/lmcache-benchmark:main"

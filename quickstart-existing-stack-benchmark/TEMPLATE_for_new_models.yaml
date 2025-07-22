@@ -1,0 +1,106 @@
+# Template for Adapting Benchmark to Different Models
+# Copy this and modify the values marked with # TODO
+
+# =============================================================================
+# 1. UPDATE: resources/benchmark-workload-configmap.yaml
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: benchmark-workload-config
+  namespace: llm-d-benchmark
+data:
+  llmdbench_workload.yaml: |
+    # TODO: Change this to your model name (must match what /v1/models endpoint returns)
+    model_name: "Qwen/Qwen3-0.6B"                    # CHANGE THIS
+    scenarios: "long-input"                          # or "short-input"
+    qps_values: "0.1 0.25 0.5"                      # Adjust based on your model's capacity
+    image: "lmcache/lmcache-benchmark:main"
+    service_account: "benchmark-runner"
+    pvc_name: "benchmark-results-pvc"
+
+---
+# =============================================================================  
+# 2. UPDATE: Environment variables in benchmark-job.yaml
+# =============================================================================
+# In the benchmark-job.yaml file, update these env variables:
+
+env:
+- name: LLMDBENCH_HARNESS_STACK_ENDPOINT_URL
+  # TODO: Update with your model's service details
+  value: "http://YOUR-SERVICE-NAME.YOUR-NAMESPACE.svc.cluster.local:PORT"
+  # Examples:
+  # - "http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"
+  # - "http://vllm-service.default.svc.cluster.local:8000"
+  # - "http://text-generation-inference.tgi-namespace.svc.cluster.local:3000"
+
+- name: LLMDBENCH_HARNESS_STACK_NAME  
+  # TODO: This becomes your results folder name - use something descriptive
+  value: "your-model-stack-name"                     # CHANGE THIS
+  # Examples:
+  # - "llama2-7b-chat"
+  # - "mistral-7b-instruct"  
+  # - "codellama-13b"
+
+- name: LLMDBENCH_HARNESS_STACK_TYPE
+  value: "llm-d"                                     # Usually keep as "llm-d"
+
+- name: LLMDBENCH_FMPERF_REPETITION
+  value: "1"                                         # Number of benchmark runs
+
+- name: LLMDBENCH_HARNESS_NAMESPACE
+  value: "llm-d-benchmark"                          # Keep as "llm-d-benchmark"
+
+- name: LLMDBENCH_HARNESS_WORKLOAD_FILE
+  value: "llmdbench_workload.yaml"                  # Keep as is
+
+# =============================================================================
+# 3. DISCOVERY COMMANDS: Find your model's service details
+# =============================================================================
+
+# Run these commands to find your model's service information:
+
+# Find services in your model's namespace:
+# kubectl get svc -n YOUR_MODEL_NAMESPACE
+
+# Check if your model has gateway/ingress services:  
+# kubectl get svc --all-namespaces | grep -E "(gateway|ingress|inference|llm)"
+
+# Test DNS resolution from benchmark namespace:
+# kubectl run dns-test --image=busybox --rm -i --restart=Never -n llm-d-benchmark \
+#   -- nslookup YOUR-SERVICE-NAME.YOUR-NAMESPACE.svc.cluster.local
+
+# Check what model names are served (if accessible):
+# kubectl run curl-test --image=curlimages/curl --rm -i --restart=Never \
+#   -- curl -s http://YOUR-SERVICE.YOUR-NAMESPACE.svc.cluster.local:PORT/v1/models
+
+# =============================================================================
+# 4. COMMON MODEL DEPLOYMENT PATTERNS
+# =============================================================================
+
+# For vLLM deployments:
+# - Service usually ends with "-service" or "-svc"  
+# - Default port is usually 8000
+# - Model name should match what vLLM is serving
+
+# For Text Generation Inference (TGI):
+# - Service usually has "tgi" or "text-generation" in name
+# - Default port is usually 3000 or 8080
+# - Model name follows HuggingFace format
+
+# For Ollama deployments:
+# - Service usually has "ollama" in name
+# - Default port is usually 11434
+# - Model name might be different format (e.g., "llama2:7b")
+
+# For LLM-D deployments:
+# - Look for services with "gateway" or "inference" in name
+# - Port is usually 80 or 8080
+# - May have istio services (ending with "-istio")
+
+# =============================================================================
+# 5. RESULTS FOLDER STRUCTURE 
+# =============================================================================
+# Results will be saved to: /requests/{LLMDBENCH_HARNESS_STACK_NAME}/
+# CSV files will be named: LMBench_long_input_output_{QPS}.csv
+# Analysis will be in: /requests/analysis/ 
