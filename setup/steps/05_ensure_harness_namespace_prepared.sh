@@ -43,7 +43,7 @@ metadata:
   name: ${LLMDBENCH_HARNESS_NAMESPACE}
   labels:
     kubernetes.io/metadata.name: ${LLMDBENCH_HARNESS_NAMESPACE}
-$(${LLMDBENCH_CONTROL_KCMD} get namespace/${LLMDBENCH_VLLM_COMMON_NAMESPACE} -o yaml | yq .metadata.labels | grep -Ev "metadata.name" | sed 's|^|    |g')
+$(${LLMDBENCH_CONTROL_KCMD} get namespace/${LLMDBENCH_VLLM_COMMON_NAMESPACE} -o yaml | yq .metadata.labels | grep -Ev "metadata.name|^null$" | sed 's|^|    |g')
 spec:
   finalizers:
   - kubernetes
