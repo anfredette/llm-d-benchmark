@@ -9,19 +9,78 @@ cd ~/llm-d-benchmark/quickstart-existing-stack-benchmark
 # 2. Clean up any old jobs
 kubectl delete jobs --all -n llm-d-benchmark
 
-# 3. Run the benchmark
+# 3. Create namespace and apply required resources
+kubectl create namespace llm-d-benchmark # if not created yet
+kubectl apply -k resources/  # Creates PVC, RBAC, ConfigMaps
+
+# 4. Run the benchmark
 kubectl apply -f benchmark-job.yaml
 
-# 4. Monitor progress
+# 5. Monitor progress
 kubectl logs -f job/benchmark-run -n llm-d-benchmark
 
-# 5. Run analysis when benchmark completes
+# 6. Run analysis when benchmark completes
 kubectl apply -f analysis-job.yaml
 
-# 6. Copy results
-mkdir -p ~/benchmark-results-$(date +%Y%m%d-%H%M%S)
-kubectl cp llm-d-benchmark/results-retriever:/requests/analysis/ ~/benchmark-results-$(date +%Y%m%d-%H%M%S)/
-kubectl cp llm-d-benchmark/results-retriever:/requests/llm-d-qwen-0-6b/ ~/benchmark-results-$(date +%Y%m%d-%H%M%S)/raw-data/
+# 7. Create results retriever pod and copy results
+kubectl apply -f retrieve.yaml
+kubectl wait --for=condition=Ready pod/results-retriever -n llm-d-benchmark --timeout=60s
+
+# Create local results directory
+export RESULTS_DIR=~/benchmark-results-$(date +%Y%m%d-%H%M%S)
+mkdir -p $RESULTS_DIR/raw-data
+
+# Copy analysis results (plots and stats)
+kubectl cp llm-d-benchmark/results-retriever:/requests/analysis/ $RESULTS_DIR/
+
+# Copy raw benchmark data - NOTE: Directory name is based on model, not stack name!
+# Check what directories exist first:
+kubectl exec results-retriever -n llm-d-benchmark -- ls -la /requests/
+
+# Common directory names:
+# - For Qwen/Qwen3-0.6B model: llm-d-3b-instruct
+# - For other models: check the job names for the pattern
+kubectl cp llm-d-benchmark/results-retriever:/requests/llm-d-3b-instruct/ $RESULTS_DIR/raw-data/
+
+# Clean up retriever pod
+kubectl delete pod results-retriever -n llm-d-benchmark
+
+echo "✅ Results copied to: $RESULTS_DIR"
+```
+
+## 🚨 Known Issues & Solutions
+
+### ⚠️ Issue: Directory Name Mismatch
+**Symptom**: `tar: /requests/llm-d-qwen-0-6b: Cannot stat: No such file or directory`
+
+**Root Cause**: The benchmark creates directory names based on the model name (`Qwen/Qwen3-0.6B` → `llm-d-3b-instruct`), not the stack name.
+
+**Solution**: 
+```bash
+# Check what directories actually exist
+kubectl exec results-retriever -n llm-d-benchmark -- ls -la /requests/
+
+# Use the actual directory name (commonly llm-d-3b-instruct for Qwen models)
+kubectl cp llm-d-benchmark/results-retriever:/requests/llm-d-3b-instruct/ $RESULTS_DIR/raw-data/
+```
+
+### ⚠️ Issue: Endpoint URL Configuration  
+**Symptom**: Benchmark completes but CSV files have only headers (1 line each), performance shows 0.0000 reqs/s
+
+**Root Cause**: Mismatch between service names in ConfigMap vs actual service names
+
+**Solution**: 
+```bash
+# Check what gateway services exist
+kubectl get svc -n llm-d | grep gateway
+
+# Verify endpoint is correct in resources/benchmark-env.yaml
+# Should match actual service name (often includes -istio suffix):
+LLMDBENCH_HARNESS_STACK_ENDPOINT_URL: "http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"
+
+# Test connectivity manually
+kubectl run test --image=curlimages/curl --rm -i --restart=Never -n llm-d-benchmark \
+  --command -- curl -s http://YOUR-ACTUAL-GATEWAY-SERVICE.llm-d.svc.cluster.local:80/v1/models
 ```
 
 ## 🔄 For Different Models
@@ -39,13 +98,11 @@ data:
 
 ### Step 2: Update Environment Variables
 
-Edit `benchmark-job.yaml` environment section:
+Edit `resources/benchmark-env.yaml`:
 ```yaml
-env:
-- name: LLMDBENCH_HARNESS_STACK_ENDPOINT_URL
-  value: "http://YOUR-SERVICE-NAME.YOUR-NAMESPACE.svc.cluster.local:PORT"
-- name: LLMDBENCH_HARNESS_STACK_NAME
-  value: "your-model-stack-name"    # Used for result folder naming
+data:
+  LLMDBENCH_HARNESS_STACK_ENDPOINT_URL: "http://YOUR-ACTUAL-SERVICE-NAME.YOUR-NAMESPACE.svc.cluster.local:PORT"
+  LLMDBENCH_HARNESS_STACK_NAME: "your-model-stack-name"    # Used for result folder naming
 ```
 
 ### Step 3: Find Your Service Details

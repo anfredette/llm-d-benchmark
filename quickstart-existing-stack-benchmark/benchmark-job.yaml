@@ -27,7 +27,7 @@ spec:
             drop:
               - ALL
         command: ["sh"]
-        args: ["-c", "mkdir -p /workspace/profiles/fmperf && cp /workspace/config/llmdbench_workload.yaml /workspace/profiles/fmperf/llmdbench_workload.yaml && python3 /workspace/local/fmperf-llm-d-benchmark.py"]
+        args: ["-c", "cp /workspace/config/llmdbench_workload.yaml /workspace/llmdbench_workload.yaml && python3 /workspace/workload/harnesses/llm-d-benchmark.py"]
         env:
         - name: LLMDBENCH_HARNESS_STACK_ENDPOINT_URL
           value: "http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"
@@ -50,9 +50,6 @@ spec:
         - name: workload-file
           mountPath: /workspace/config
           readOnly: true
-        - name: local-script
-          mountPath: /workspace/local
-          readOnly: true
       volumes:
       - name: results
         persistentVolumeClaim:
@@ -60,7 +57,4 @@ spec:
       - name: workload-file
         configMap:
           name: benchmark-workload-config
-      - name: local-script
-        configMap:
-          name: fmperf-script
       restartPolicy: Never
