@@ -27,7 +27,7 @@ spec:
             drop:
               - ALL
         command: ["sh"]
-        args: ["-c", "cp /workspace/config/llmdbench_workload.yaml /workspace/llmdbench_workload.yaml && python3 /workspace/workload/harnesses/llm-d-benchmark.py"]
+        args: ["-c", "ln -sf /workspace/config/llmdbench_workload.yaml /workspace/llmdbench_workload.yaml && python3 /workspace/workload/harnesses/llm-d-benchmark.py"]
         env:
         - name: LLMDBENCH_HARNESS_STACK_ENDPOINT_URL
           value: "http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"

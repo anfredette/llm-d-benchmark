@@ -1,5 +1,7 @@
 # LLM-D Benchmark Cheat Sheet
 
+> ⚠️ **IMPORTANT**: This benchmark requires the `inference-gateway-service-fix.yaml` workaround to function correctly due to a hostname resolution bug in the benchmark harness. See the DNS Resolution issue below for details.
+
 ## 🚀 Quick Run (Same Qwen Model)
 
 ```bash
@@ -13,16 +15,19 @@ kubectl delete jobs --all -n llm-d-benchmark
 kubectl create namespace llm-d-benchmark # if not created yet
 kubectl apply -k resources/  # Creates PVC, RBAC, ConfigMaps
 
-# 4. Run the benchmark
+# 4. Apply DNS workaround for service resolution (REQUIRED)
+kubectl apply -f inference-gateway-service-fix.yaml
+
+# 5. Run the benchmark
 kubectl apply -f benchmark-job.yaml
 
-# 5. Monitor progress
+# 6. Monitor progress
 kubectl logs -f job/benchmark-run -n llm-d-benchmark
 
-# 6. Run analysis when benchmark completes
+# 7. Run analysis when benchmark completes
 kubectl apply -f analysis-job.yaml
 
-# 7. Create results retriever pod and copy results
+# 8. Create results retriever pod and copy results
 kubectl apply -f retrieve.yaml
 kubectl wait --for=condition=Ready pod/results-retriever -n llm-d-benchmark --timeout=60s
 
@@ -46,6 +51,13 @@ kubectl cp llm-d-benchmark/results-retriever:/requests/llm-d-3b-instruct/ $RESUL
 kubectl delete pod results-retriever -n llm-d-benchmark
 
 echo "✅ Results copied to: $RESULTS_DIR"
+
+# 9. Verify results (should show real performance data)
+echo "📊 Verifying successful benchmark run:"
+echo "Total requests should be > 0:"
+grep -h "," $RESULTS_DIR/raw-data/*.csv | wc -l
+echo "Sample performance data:"
+head -3 $RESULTS_DIR/raw-data/LMBench_long_input_output_0.1.csv
 ```
 
 ## 🚨 Known Issues & Solutions
@@ -64,24 +76,22 @@ kubectl exec results-retriever -n llm-d-benchmark -- ls -la /requests/
 kubectl cp llm-d-benchmark/results-retriever:/requests/llm-d-3b-instruct/ $RESULTS_DIR/raw-data/
 ```
 
-### ⚠️ Issue: Endpoint URL Configuration  
-**Symptom**: Benchmark completes but CSV files have only headers (1 line each), performance shows 0.0000 reqs/s
+### ⚠️ Issue: DNS Resolution / Service Name Bug
+**Symptom**: Benchmark completes but CSV files have only headers (1 line each), performance shows 0.0000 reqs/s, "Name or service not known" errors in evaluation job logs
 
-**Root Cause**: Mismatch between service names in ConfigMap vs actual service names
+**Root Cause**: The benchmark harness has a bug where it extracts only the hostname from the full service URL when creating evaluation jobs. Even though the main job gets `http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80`, the evaluation job only gets `http://inference-gateway`.
 
-**Solution**: 
+**Solution (Workaround)**: Create a DNS mapping service:
 ```bash
-# Check what gateway services exist
-kubectl get svc -n llm-d | grep gateway
+# Apply the service fix (REQUIRED for working benchmarks)
+kubectl apply -f inference-gateway-service-fix.yaml
 
-# Verify endpoint is correct in resources/benchmark-env.yaml
-# Should match actual service name (often includes -istio suffix):
-LLMDBENCH_HARNESS_STACK_ENDPOINT_URL: "http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"
-
-# Test connectivity manually
-kubectl run test --image=curlimages/curl --rm -i --restart=Never -n llm-d-benchmark \
-  --command -- curl -s http://YOUR-ACTUAL-GATEWAY-SERVICE.llm-d.svc.cluster.local:80/v1/models
+# Test connectivity with short name
+kubectl run test-short --image=curlimages/curl --rm -i --restart=Never -n llm-d-benchmark \
+  --command -- curl -s http://inference-gateway:80/v1/models
 ```
+
+**Long-term Fix**: The benchmark harness code needs to be updated to pass the full service URL to evaluation jobs instead of extracting just the hostname.
 
 ## 🔄 For Different Models
 
@@ -129,6 +139,12 @@ kubectl run dns-test --image=busybox --rm -i --restart=Never -n llm-d-benchmark 
 ### `benchmark-job.yaml`
 - Main benchmark job definition
 - **Key sections:** `env` variables, `volumeMounts`
+
+### `inference-gateway-service-fix.yaml` (Workaround)
+- DNS mapping service that resolves the hostname issue
+- Maps `inference-gateway` → `llm-d-inference-gateway-istio.llm-d.svc.cluster.local`
+- **Required for working benchmarks** until the harness code is fixed
+- Uses `ExternalName` service type for cross-namespace service mapping
 
 ## 🛠️ Troubleshooting
 
