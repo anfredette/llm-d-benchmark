@@ -19,8 +19,11 @@ echo
 SERVICE_URL="http://llm-d-inference-gateway-istio.llm-d.svc.cluster.local:80"
 STACK_NAME="llm-d-qwen-0-6b"
 MODEL_NAME="Qwen/Qwen3-0.6B"
+QPS_VALUES="0.5 1.0 5.0 10.0"
 SCENARIOS="long-input"
-QPS_VALUES="0.1 0.25 0.5"
+# Alternative scenario options:
+# SCENARIOS="short-input"    # For shorter input/output tests
+# SCENARIOS="sharegpt"       # For ShareGPT dataset tests
 
 echo -e "${GREEN}Step 1: Configuring benchmark parameters...${NC}"
 echo "  Service URL: $SERVICE_URL"
