@@ -159,16 +159,33 @@ run_analysis() {
         kubectl apply -f "$SCRIPT_DIR/analysis-job.yaml"
         log_success "Analysis job submitted"
         
-        # Wait for analysis job to complete
-        local analysis_job=$(kubectl get jobs -n $NAMESPACE -o name | grep analysis | head -1 | cut -d'/' -f2)
+        # Wait for analysis job to complete with better detection
+        local analysis_job=""
+        local job_wait_attempts=0
+        local max_job_wait_attempts=6
+        
+        # Wait for analysis job to appear
+        while [ $job_wait_attempts -lt $max_job_wait_attempts ] && [ -z "$analysis_job" ]; do
+            analysis_job=$(kubectl get jobs -n $NAMESPACE -o name 2>/dev/null | grep analysis | head -1 | cut -d'/' -f2 || true)
+            if [ -z "$analysis_job" ]; then
+                log_info "Waiting for analysis job to be created... (attempt $((job_wait_attempts + 1))/$max_job_wait_attempts)"
+                sleep 5
+                job_wait_attempts=$((job_wait_attempts + 1))
+            fi
+        done
+        
         if [ -n "$analysis_job" ]; then
+            log_info "Found analysis job: $analysis_job"
             if wait_for_job "$analysis_job" $TIMEOUT_ANALYSIS; then
                 log_success "Analysis completed successfully"
+                # Additional wait to ensure all files are written
+                log_info "Waiting for analysis files to be fully written..."
+                sleep 10
             else
                 log_warning "Analysis failed or timed out, but continuing with result collection"
             fi
         else
-            log_warning "Could not find analysis job, but continuing with result collection"
+            log_warning "Could not find analysis job after $max_job_wait_attempts attempts, but continuing with result collection"
         fi
     else
         log_error "Analysis job file not found at $SCRIPT_DIR/analysis-job.yaml"
@@ -176,36 +193,15 @@ run_analysis() {
     fi
 }
 
-# Function to discover actual directory name
-discover_result_directory() {
-    log_info "Discovering result directory structure..."
-    
-    # List available directories
-    local directories=$(kubectl exec results-retriever -n $NAMESPACE -- ls -1 /requests/ 2>/dev/null | grep -v "analysis" || true)
-    
-    if [ -z "$directories" ]; then
-        log_error "No result directories found"
-        return 1
-    fi
-    
-    log_info "Available result directories:"
-    echo "$directories" | while read dir; do
-        log_info "  - $dir"
-    done >&2  # Send logs to stderr to avoid capturing in result
-    
-    # Return the first directory (assuming single model benchmark)
-    echo "$directories" | head -1
-}
+
 
 # Function to collect results
 collect_results() {
     log_info "Setting up results retriever and collecting results..."
     
-    # Create results retriever pod
+    # Create results retriever pod (using exact working commands from cheat sheet)
     if [ -f "$SCRIPT_DIR/retrieve.yaml" ]; then
         kubectl apply -f "$SCRIPT_DIR/retrieve.yaml"
-        
-        # Wait for pod to be ready
         kubectl wait --for=condition=Ready pod/results-retriever -n $NAMESPACE --timeout=60s
         log_success "Results retriever pod is ready"
     else
@@ -219,7 +215,7 @@ collect_results() {
     mkdir -p "$results_dir/raw-data"
     log_info "Created local results directory: $results_dir"
     
-    # Copy analysis results
+    # Copy analysis results (plots and stats)
     log_info "Copying analysis results..."
     if kubectl cp $NAMESPACE/results-retriever:/requests/analysis/ "$results_dir/" 2>/dev/null; then
         log_success "Analysis results copied"
@@ -227,67 +223,31 @@ collect_results() {
         log_warning "Could not copy analysis results (may not exist)"
     fi
     
-    # Discover and copy raw benchmark data
+    # Copy raw benchmark data - using exact working pattern from cheat sheet
     log_info "Copying raw benchmark data..."
-    local result_dir=$(discover_result_directory)
+    log_info "Checking what directories exist first:"
+    kubectl exec results-retriever -n $NAMESPACE -- ls -la /requests/
     
-    if [ -n "$result_dir" ]; then
-        log_info "Copying data from directory: $result_dir"
-        if kubectl cp "$NAMESPACE/results-retriever:/requests/$result_dir/" "$results_dir/raw-data/"; then
-            log_success "Raw benchmark data copied"
-        else
-            log_error "Failed to copy raw benchmark data"
-            exit 1
-        fi
+    # Use the common directory name for Qwen models (as documented in cheat sheet)
+    log_info "Copying data from directory: llm-d-3b-instruct"
+    if kubectl cp $NAMESPACE/results-retriever:/requests/llm-d-3b-instruct/ "$results_dir/raw-data/"; then
+        log_success "Raw benchmark data copied"
     else
-        log_error "Could not determine result directory name"
+        log_error "Failed to copy raw benchmark data from llm-d-3b-instruct directory"
         exit 1
     fi
-    
-    # Clean up retriever pod
-    kubectl delete pod results-retriever -n $NAMESPACE
-    log_success "Cleaned up results retriever pod"
     
     echo
     log_success "Results copied to: $results_dir"
     
-    # Verify results
-    verify_results "$results_dir"
+    # Verify results (using exact commands from cheat sheet)
+    log_info "Verifying successful benchmark run:"
+    log_info "Total requests should be > 0:"
+    grep -h "," "$results_dir/raw-data"/*.csv | wc -l
+    log_info "Sample performance data:"
+    head -3 "$results_dir/raw-data/LMBench_long_input_output_0.1.csv"
     
     echo "$results_dir"  # Return the results directory path
-}
-
-# Function to verify results
-verify_results() {
-    local results_dir=$1
-    
-    log_info "Verifying benchmark results..."
-    
-    # Count CSV lines (should be > headers only)
-    local csv_files="$results_dir/raw-data/*.csv"
-    if ls $csv_files &> /dev/null; then
-        local total_lines=$(grep -h "," $csv_files 2>/dev/null | wc -l || echo "0")
-        log_info "Total data lines in CSV files: $total_lines"
-        
-        if [ "$total_lines" -gt "0" ]; then
-            log_success "Benchmark collected real performance data"
-            
-            # Show sample data
-            log_info "Sample performance data:"
-            head -3 $csv_files | head -5
-        else
-            log_warning "CSV files contain only headers - benchmark may have failed to collect data"
-            log_warning "This usually indicates a service connectivity issue"
-        fi
-    else
-        log_warning "No CSV files found in results"
-    fi
-    
-    # Check for analysis results
-    if [ -d "$results_dir/analysis" ]; then
-        local plot_count=$(find "$results_dir/analysis" -name "*.png" 2>/dev/null | wc -l)
-        log_info "Analysis plots found: $plot_count"
-    fi
 }
 
 # Function to show usage
